@@ -9,6 +9,14 @@ rust-version = "1.95"
 [lints]
 workspace = true
 
+[features]
+default = ["wgpu", "accessibility"]
+# The wgpu renderer and the platform accessibility adapter (AccessKit). The experimental Windows 7
+# build leaves both out: wgpu's Direct3D 12 backend and AccessKit's Windows adapter need newer
+# Windows (docs/windows7.md). The control channel reads egui's own AccessKit tree either way.
+wgpu = ["eframe/wgpu"]
+accessibility = ["eframe/accesskit"]
+
 [dependencies]
 craft-ui = { workspace = true }
 # The menus: native on macOS, an egui bar elsewhere, from one definition (menus.rs).
@@ -25,7 +33,7 @@ pdfcraft-model = { workspace = true }
 pdfcraft-platform = { workspace = true }
 egui = { workspace = true, features = ["bytemuck", "default_fonts", "monochrome_emoji_fonts"] }
 egui_extras = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "persistence", "links", "clipboard"] }
+eframe = { workspace = true, features = ["default_fonts", "persistence", "links", "clipboard"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

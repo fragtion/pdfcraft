@@ -1,10 +1,18 @@
 //! System print spooler supplied by craft-print. PDF composition and permission checks
 //! stay in PdfCraft; these adapters retain the application's print-error surface.
 
+#[cfg(not(target_vendor = "win7"))]
+pub use craft_print::printers;
 pub use craft_print::{
     Duplex, HANDLED_OPTIONS, HAS_PRINTER_PREFERENCES, Job, Printer, PrinterOption, Scaling, lp_args, lpstat_command, parse_lpoptions, parse_lpstat,
-    parse_lpstat_e, parse_ppd, parse_windows_printers, ppd_text, printers, printers_parsed,
+    parse_lpstat_e, parse_ppd, parse_windows_printers, ppd_text, printers_parsed,
 };
+#[cfg(target_vendor = "win7")]
+pub use windows7::printers;
+
+/// The experimental Windows 7 build's spooler: the PDF viewer's print verb (docs/windows7.md).
+#[cfg(any(test, target_vendor = "win7"))]
+mod windows7;
 
 /// The driver's job options for a printer (CUPS: its PPD, with the queue's current defaults);
 /// empty when it has none or on other platforms. Reads files and runs `lpoptions`, so call it
@@ -144,13 +152,20 @@ pub(crate) fn printer_options_via_within(
 }
 
 pub fn submit(pdf: &[u8], job: &Job) -> Result<String, crate::PrintError> {
-    craft_print::submit(pdf, job).map_err(|e| crate::PrintError::Spool(e.to_string()))
+    submit_with_progress(pdf, job, &mut |_, _| {})
 }
 
 /// [`submit`], told `(sent, sheets)` as each sheet reaches the spooler (Windows; CUPS takes the
 /// whole PDF at once and reports nothing).
 pub fn submit_with_progress(pdf: &[u8], job: &Job, progress: &mut dyn FnMut(usize, usize)) -> Result<String, crate::PrintError> {
-    craft_print::submit_with_progress(pdf, job, progress).map_err(|e| crate::PrintError::Spool(e.to_string()))
+    #[cfg(not(target_vendor = "win7"))]
+    {
+        craft_print::submit_with_progress(pdf, job, progress).map_err(|e| crate::PrintError::Spool(e.to_string()))
+    }
+    #[cfg(target_vendor = "win7")]
+    {
+        windows7::submit_with_progress(pdf, job, progress)
+    }
 }
 
 pub fn open_printer_preferences(printer: &str) -> Result<(), crate::PrintError> {
