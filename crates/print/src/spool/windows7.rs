@@ -17,14 +17,7 @@ use crate::PrintError;
 pub(crate) fn job_file(dir: &std::path::Path, pdf: &[u8]) -> Result<std::path::PathBuf, String> {
     use std::io::Write as _;
     std::fs::create_dir_all(dir).map_err(|e| format!("can't make {}: {e}", dir.display()))?;
-    // A folder of a few files; the cap only bounds a runaway listing.
-    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten().take(4096) {
-        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() > 3600);
-        if old {
-            // Another job's viewer may still be reading it: it goes next time.
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
+    sweep(dir);
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
     let path = dir.join(format!("job-{}-{stamp}.pdf", std::process::id()));
     let mut file =
@@ -37,26 +30,51 @@ pub(crate) fn job_file(dir: &std::path::Path, pdf: &[u8]) -> Result<std::path::P
     Ok(path)
 }
 
-/// `s` as a PowerShell single-quoted string.
-pub(crate) fn ps_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
-/// The PowerShell that prints `file` on `printer` (the default printer when `None`) through the
-/// PDF viewer's verb. PrintTo takes the printer name in double quotes, which a Windows printer
-/// name can't contain.
-pub(crate) fn print_script(file: &str, printer: Option<&str>) -> String {
-    let path = ps_quote(file);
-    match printer.map(str::trim).filter(|p| !p.is_empty()) {
-        Some(p) => {
-            format!(
-                "Start-Process -FilePath {path} -Verb PrintTo -ArgumentList {} -WindowStyle Hidden",
-                ps_quote(&format!("\"{}\"", p.replace('"', "")))
-            )
+/// Removes the job files in `dir` more than an hour old: their viewer has long read them. Runs
+/// before each job and whenever the printers are listed (the Print dialog opens), so a job's file
+/// outlives it by about an hour of using PdfCraft's printing. A file still in use stays for the
+/// next sweep; the folder is the user's own temp folder.
+pub(crate) fn sweep(dir: &std::path::Path) {
+    // A folder of a few files; the cap only bounds a runaway listing.
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten().take(4096) {
+        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() > 3600);
+        if old {
+            let _ = std::fs::remove_file(entry.path());
         }
-        None => format!("Start-Process -FilePath {path} -Verb Print -WindowStyle Hidden"),
     }
 }
+
+/// The environment variables that carry the job's file and printer into PowerShell. A value in
+/// the environment is data to PowerShell, never parsed as script, whatever quotes it contains
+/// (PowerShell also ends a single-quoted string at ‘ ’ ‚ ‛), so neither is ever written into the
+/// script's source.
+const FILE_VAR: &str = "PDFCRAFT_PRINT_FILE";
+const PRINTER_VAR: &str = "PDFCRAFT_PRINT_PRINTER";
+
+/// The fixed scripts: Print on the default printer, PrintTo on a named one. Each writes `ok`
+/// once the viewer has been started; `$ErrorActionPreference = 'Stop'` turns a failure into no `ok`.
+const PRINT_SCRIPT: &str = "Start-Process -FilePath $env:PDFCRAFT_PRINT_FILE -Verb Print -WindowStyle Hidden; 'ok'";
+const PRINT_TO_SCRIPT: &str =
+    "Start-Process -FilePath $env:PDFCRAFT_PRINT_FILE -Verb PrintTo -ArgumentList $env:PDFCRAFT_PRINT_PRINTER -WindowStyle Hidden; 'ok'";
+
+/// The script and environment that print `file` on `printer` (the default printer when `None` or
+/// blank) through the PDF viewer's verb. PrintTo takes the printer name in double quotes, which a
+/// Windows printer name can't contain.
+pub(crate) fn print_invocation(file: &str, printer: Option<&str>) -> (&'static str, Vec<(&'static str, String)>) {
+    let mut env = vec![(FILE_VAR, file.to_string())];
+    match printer.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => {
+            env.push((PRINTER_VAR, format!("\"{}\"", p.replace('"', ""))));
+            (PRINT_TO_SCRIPT, env)
+        }
+        None => (PRINT_SCRIPT, env),
+    }
+}
+
+/// How long PowerShell may take to start the viewer before the job is given up: a viewer whose
+/// print handler hangs must not leave the job pending for ever.
+#[cfg(target_vendor = "win7")]
+const LAUNCH_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// What the dialog is told once the viewer has the job: the settings the viewer decides.
 pub(crate) fn handed_over(job: &Job) -> String {
@@ -67,6 +85,7 @@ pub(crate) fn handed_over(job: &Job) -> String {
     note
 }
 
+/// Windows PowerShell (2.0 on Windows 7 SP1) running `script`, without a console window.
 #[cfg(target_vendor = "win7")]
 fn powershell(script: &str) -> std::process::Command {
     use std::os::windows::process::CommandExt as _;
@@ -86,6 +105,7 @@ fn powershell(script: &str) -> std::process::Command {
 /// The spooler's printers, the default first; empty when it can't be asked.
 #[cfg(target_vendor = "win7")]
 pub fn printers() -> Vec<Printer> {
+    sweep(&std::env::temp_dir().join("pdfcraft-print"));
     let list = craft_print::rgb::printers().unwrap_or_default();
     list.into_iter().map(|p| Printer { name: p.name, description: String::new(), default: p.default, two_sided: None }).collect()
 }
@@ -94,15 +114,13 @@ pub fn printers() -> Vec<Printer> {
 #[cfg(target_vendor = "win7")]
 pub fn submit_with_progress(pdf: &[u8], job: &Job, progress: &mut dyn FnMut(usize, usize)) -> Result<String, PrintError> {
     let file = job_file(&std::env::temp_dir().join("pdfcraft-print"), pdf).map_err(PrintError::Spool)?;
-    let script = print_script(&file.to_string_lossy(), job.printer.as_deref());
-    let out = powershell(&script).output();
-    let failed = match out {
-        Ok(o) if o.status.success() => None,
-        Ok(o) => {
-            let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
-            Some(if err.is_empty() { format!("PowerShell failed ({})", o.status) } else { err })
-        }
-        Err(e) => Some(format!("can't run PowerShell: {e}")),
+    let (script, env) = print_invocation(&file.to_string_lossy(), job.printer.as_deref());
+    let mut command = powershell(script);
+    command.envs(env);
+    let failed = match super::output_within(&mut command, LAUNCH_LIMIT) {
+        Ok(out) if String::from_utf8_lossy(&out).trim() == "ok" => None,
+        Ok(_) => Some("PowerShell couldn't start it".to_string()),
+        Err(e) => Some(format!("PowerShell: {e}")),
     };
     if let Some(e) = failed {
         // No viewer took the job, so nothing will read the file.
@@ -120,14 +138,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn printer_names_and_paths_are_quoted_for_powershell() {
-        assert_eq!(ps_quote("it's.pdf"), "'it''s.pdf'");
-        assert_eq!(print_script(r"C:\T\job.pdf", None), r"Start-Process -FilePath 'C:\T\job.pdf' -Verb Print -WindowStyle Hidden");
-        assert_eq!(print_script(r"C:\T\job.pdf", Some("  ")), r"Start-Process -FilePath 'C:\T\job.pdf' -Verb Print -WindowStyle Hidden");
+    fn file_and_printer_reach_powershell_as_data_never_as_script() {
+        // Quotes PowerShell would end a single-quoted string at, ASCII and typographic.
+        let hostile = "Office \"Laser\" 'B' ‘x’ ‚y‛; Remove-Item C:\\ $(calc)";
+        let (script, env) = print_invocation(r"C:\Bob's ‘dir’\job.pdf", Some(hostile));
+        assert_eq!(script, PRINT_TO_SCRIPT);
+        assert!(!script.contains("Bob") && !script.contains("Laser"));
         assert_eq!(
-            print_script(r"C:\Bob's\job.pdf", Some("Office \"Laser\" 'B'")),
-            r#"Start-Process -FilePath 'C:\Bob''s\job.pdf' -Verb PrintTo -ArgumentList '"Office Laser ''B''"' -WindowStyle Hidden"#
+            env,
+            [(FILE_VAR, r"C:\Bob's ‘dir’\job.pdf".to_string()), (PRINTER_VAR, "\"Office Laser 'B' ‘x’ ‚y‛; Remove-Item C:\\ $(calc)\"".to_string())]
         );
+        // The scripts read the variables they are given.
+        assert!(PRINT_TO_SCRIPT.contains(&format!("$env:{FILE_VAR}")) && PRINT_TO_SCRIPT.contains(&format!("$env:{PRINTER_VAR}")));
+        assert!(PRINT_SCRIPT.contains(&format!("$env:{FILE_VAR}")));
+        for blank in [None, Some(""), Some("  ")] {
+            assert_eq!(print_invocation("job.pdf", blank), (PRINT_SCRIPT, vec![(FILE_VAR, "job.pdf".to_string())]));
+        }
+    }
+
+    #[test]
+    fn the_sweep_removes_job_files_older_than_an_hour_only() {
+        let dir = std::env::temp_dir().join(format!("pdfcraft-print-sweep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (old, new) = (dir.join("old.pdf"), dir.join("new.pdf"));
+        std::fs::write(&old, b"a").unwrap();
+        std::fs::write(&new, b"b").unwrap();
+        let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        std::fs::File::options().write(true).open(&old).unwrap().set_modified(two_hours_ago).unwrap();
+        sweep(&dir);
+        assert!(!old.exists());
+        assert!(new.exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

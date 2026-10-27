@@ -33,8 +33,8 @@ existing defaults.
 In your GitHub fork, open **Actions → Windows 7 x64 compatibility → Run workflow** (it also runs
 weekly and on pull requests changing the compatibility path). When it succeeds, download the
 `pdfcraft-windows7-x64-portable` artifact, extract the contained portable ZIP, then run
-`pdfcraft.exe` on Windows 7. The CLI and the OCR models are included. No MSI is provided: the
-existing installer remains for modern Windows.
+`pdfcraft.exe` on Windows 7. The CLI is included, and the OCR models when their download
+succeeded (see below). No MSI is provided: the existing installer remains for modern Windows.
 
 To build locally, use a **Windows 10/11 build computer**, with Rust/rustup and Visual Studio 2022
 C++ build tools (x64 compiler and Windows SDK). Open an **x64 Native Tools Command Prompt for
@@ -101,4 +101,4 @@ Windows imports, so retain Cargo.lock and repeat runtime QA after dependency upd
 
 ## Revision history
 
-- 2026-10-27: First version, ported from VectorCraft's Windows 7 build.
+- 2026-10-27: First version, ported from VectorCraft's Windows 7 build. Review: OCR models are optional in the ZIP; the print verb runs with a time limit and gets the file and printer as data.

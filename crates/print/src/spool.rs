@@ -42,14 +42,14 @@ pub fn printer_options_in(printer: &str, lang: &str) -> Vec<PrinterOption> {
 const LPOPTIONS_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The most of a command's output that is kept (`lpoptions -l` is a few kilobytes).
-#[cfg(any(test, all(unix, not(target_arch = "wasm32"))))]
+#[cfg(any(test, target_vendor = "win7", all(unix, not(target_arch = "wasm32"))))]
 const OUTPUT_CAP: u64 = 4 << 20;
 
 /// Run `command` and collect its standard output, giving it `limit`: a command still running
 /// then is killed and reaped, and the error is `TimedOut`. Standard input and error are not
 /// connected. The exit status is not checked, as `Command::output` leaves it to the caller.
-/// Only CUPS runs a command today; the tests cover every desktop platform.
-#[cfg(any(test, all(unix, not(target_arch = "wasm32"))))]
+/// CUPS and the Windows 7 build's print verb run commands; the tests cover every desktop platform.
+#[cfg(any(test, target_vendor = "win7", all(unix, not(target_arch = "wasm32"))))]
 pub(crate) fn output_within(command: &mut std::process::Command, limit: std::time::Duration) -> std::io::Result<Vec<u8>> {
     use std::io::Read as _;
     use std::process::Stdio;
