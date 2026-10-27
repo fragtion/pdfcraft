@@ -21,6 +21,7 @@ Push-Location $Root
 $FlagName = 'CARGO_TARGET_X86_64_WIN7_WINDOWS_MSVC_RUSTFLAGS'
 $OldFlags = [Environment]::GetEnvironmentVariable($FlagName)
 $OldWinres = $env:PDFCRAFT_REQUIRE_WINRES
+$OldAwsLcBuilder = $env:AWS_LC_SYS_CMAKE_BUILDER
 $Lock = Join-Path $Root 'Cargo.lock'
 $LockBytes = [IO.File]::ReadAllBytes($Lock)
 try {
@@ -45,6 +46,10 @@ try {
   if (-not ($Tree -match '^windows-link v[^ ]+ \(.*vendor[\\/]windows-link\)')) { throw 'the patched windows-link is not in use' }
   # The ordinary pc-windows-msvc standard library requires Windows 10. Rebuild std for win7.
   [Environment]::SetEnvironmentVariable($FlagName, '-C target-feature=+crt-static')
+  # aws-lc picks its random source at compile time: built for Windows 8+ it looks up ProcessPrng at
+  # run time and aborts when it is missing. Its cc builder targets Windows 7 on a win7 triple (and
+  # so uses BCryptGenRandom); its CMake builder doesn't, so never let it fall back to CMake.
+  $env:AWS_LC_SYS_CMAKE_BUILDER = '0'
   $env:PDFCRAFT_REQUIRE_WINRES = '1'
   if (-not $env:PDFCRAFT_BUILD_SHA) { $env:PDFCRAFT_BUILD_SHA = (git -C $Root rev-parse HEAD 2>$null) }
   if (-not $env:PDFCRAFT_BUILD_DATE) { $env:PDFCRAFT_BUILD_DATE = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd') }
@@ -69,8 +74,11 @@ try {
     # Regression gate for known loader failures; actual Win7 runtime QA remains necessary.
     # combase.dll and api-ms-win-core-winrt-* are the Windows Runtime (Windows 8+), dcomp.dll is
     # DirectComposition (Windows 8+) and d3d12.dll is Direct3D 12 (Windows 10).
-    if ($Imports -match '(?i)\b(GetSystemTimePreciseAsFileTime|ProcessPrng|WaitOnAddress|WakeByAddressSingle|WakeByAddressAll)\b|combase\.dll|bcryptprimitives\.dll|d3d12\.dll|dcomp\.dll|api-ms-win-core-path-|api-ms-win-core-winrt-') {
-      throw "$Name directly imports a known post-Windows-7 API"
+    # The DLLs are listed every time, so a run records what the build imports.
+    Write-Output "$Name imports:" ($Imports | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { '  ' + $_.Trim() })
+    $Bad = @($Imports | Where-Object { $_ -match '(?i)\b(GetSystemTimePreciseAsFileTime|ProcessPrng|WaitOnAddress|WakeByAddressSingle|WakeByAddressAll)\b|combase\.dll|bcryptprimitives\.dll|d3d12\.dll|dcomp\.dll|api-ms-win-core-path-|api-ms-win-core-winrt-' })
+    if ($Bad.Count -gt 0) {
+      throw "$Name directly imports a known post-Windows-7 API: $(($Bad | ForEach-Object { $_.Trim() }) -join ', ')"
     }
   }
   Invoke-Checked { & (Join-Path $Bin 'pdfcraft-cli.exe') --version }
@@ -110,5 +118,6 @@ try {
   [IO.File]::WriteAllBytes($Lock, $LockBytes)
   [Environment]::SetEnvironmentVariable($FlagName, $OldFlags)
   $env:PDFCRAFT_REQUIRE_WINRES = $OldWinres
+  $env:AWS_LC_SYS_CMAKE_BUILDER = $OldAwsLcBuilder
   Pop-Location
 }
