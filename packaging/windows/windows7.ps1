@@ -94,8 +94,15 @@ try {
   $Models = Join-Path $Stage 'models'
   New-Item -ItemType Directory -Force $Models | Out-Null
   # With the patch and --locked too, so the lock file stays as the build and the tests need it.
-  Invoke-Checked { cargo "+$Toolchain" @Patch --locked xtask models $Models }
-  Remove-Item -Force (Join-Path $Models '*.part') -ErrorAction SilentlyContinue
+  # Best effort in this experimental build: when the model host refuses the download, the ZIP
+  # ships without models\ (OCR then can't run) rather than not at all.
+  cargo "+$Toolchain" @Patch --locked xtask models $Models
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "the OCR models couldn't be fetched (exit code $LASTEXITCODE): this ZIP has no models folder, so OCR won't run"
+    Remove-Item -Recurse -Force $Models
+  } else {
+    Remove-Item -Force (Join-Path $Models '*.part') -ErrorAction SilentlyContinue
+  }
   if ($env:CRAFT_FONTS_DIR) {
     . (Join-Path $PSScriptRoot 'font-notices.ps1')
     foreach ($ofl in @(Get-CraftFontNotices $env:CRAFT_FONTS_DIR (Test-Path Env:CRAFT_FONTS_REQUIRED))) {

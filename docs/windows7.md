@@ -49,7 +49,8 @@ Add `-Test` to also run the app, CLI and print tests on the build computer.
 Output: `dist/release/pdfcraft-windows7-x64-portable.zip`. The script installs the pinned nightly
 compiler and `rust-src`, rebuilds the standard library for `x86_64-win7-windows-msvc`, and links
 the C runtime statically. It never installs Rust on the Windows 7 machine. It fetches the OCR
-models with `cargo xtask models`, so it needs the network. The optional `CRAFT_FONTS_DIR` setting
+models with `cargo xtask models`, so it needs the network; when the model host refuses the
+download, it warns and builds the ZIP without a `models` folder, so OCR won't run. The optional `CRAFT_FONTS_DIR` setting
 works as in the normal build. Without it, install fonts for the languages you need on the
 destination machine.
 
