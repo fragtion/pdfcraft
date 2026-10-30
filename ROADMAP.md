@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25% (ready for real work 50% → 75%) and ~400–700 h away
 
-> **Last reviewed:** 2026-10-25 | **Last updated:** 2026-10-27 | **Change:** minor (M14: experimental, unsupported Windows 7 SP1 x64 portable build, docs/windows7.md; not runtime-verified; estimates unchanged)
+> **Last reviewed:** 2026-10-27 | **Last updated:** 2026-10-30 | **Change:** minor (M14: experimental, unsupported Windows 7 SP1 x64 portable build, docs/windows7.md; not runtime-verified; estimates unchanged)
 > **Last reviewed:** 2026-10-27 | **Last updated:** 2026-10-27 | **Change:** minor (M10: OCR model downloads use verified ONNX pairs with legacy discovery fallback; estimates unchanged)
 > **Last reviewed:** 2026-10-25 | **Last updated:** 2026-10-25 | **Change:** minor (M14 localization current state: Arabic logical catalog, explicit RTL label direction and mirrored stock chrome; native/browser RTL workflows unqualified. Native release Hans face via LXGW WenKai Lite; estimates unchanged)
 > **Last reviewed:** 2026-10-23 · **Last updated:** 2026-10-23 · **Change:** minor (M7, #2636 partial: pasting added text boxes and images in the engine and through `content_copy`; estimates unchanged)
